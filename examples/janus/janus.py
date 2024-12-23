@@ -170,8 +170,7 @@ async def publish(plugin, player):
         pc.addTrack(player.video)
     else:
         # Taojie: don't show video if there is no video track
-        # pc.addTrack(VideoStreamTrack())
-        pass
+        pc.addTrack(VideoStreamTrack())
 
     # prepare offer
     await pc.setLocalDescription(await pc.createOffer())
@@ -265,14 +264,14 @@ async def run(player, recorder, room, session: JanusSession):
     for publisher in publishers:
         print("id: %(id)s, display: %(display)s" % publisher)
 
-    # send video
-    await publish(plugin=plugin, player=player)
-
     # receive video if publiser exists
     if recorder is not None and publishers:
         await subscribe(
             session=session, room=room, feed=publishers[0]["id"], recorder=recorder
         )
+        
+    # send video
+    await publish(plugin=plugin, player=player)
 
     # exchange media for 10 minutes
     print("Exchanging media")
@@ -336,7 +335,9 @@ if __name__ == "__main__":
         pass
     finally:
         if recorder is not None:
-            loop.run_until_complete(recorder.stop())
+            pass
+            # Taojie: recorder.stop() is not defined
+            # loop.run_until_complete(recorder.stop())
         loop.run_until_complete(session.destroy())
 
         # close peer connections
