@@ -17,8 +17,9 @@ def transaction_id():
     return "".join(random.choice(string.ascii_letters) for x in range(12))
 
 class VideoReceiver:
-    def __init__(self):
+    def __init__(self, id):
         self.track = None
+        self.publisher_id = id
 
     async def handle_track(self, track):
         self.track = track
@@ -29,7 +30,7 @@ class VideoReceiver:
                 frame = frame.to_ndarray(format="bgr24")
                 frame_count += 1
                 print(f"Received video frame {frame_count}")
-                cv2.imshow("Frame", frame)
+                cv2.imshow(f"Frame_{self.publisher_id}", frame)
 
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
@@ -266,16 +267,21 @@ async def run(player, recorder, room, session: JanusSession):
 
     # receive video if publiser exists
     if recorder is not None and publishers:
-        await subscribe(
-            session=session, room=room, feed=publishers[0]["id"], recorder=recorder
-        )
+        # await subscribe(
+        #     session=session, room=room, feed=publishers[0]["id"], recorder=recorder
+        # )
+        for i, publisher in enumerate(publishers):
+            recorder = VideoReceiver(i)
+            await subscribe(
+                session=session, room=room, feed=publisher["id"], recorder=recorder
+            )
         
     # send video
     await publish(plugin=plugin, player=player)
 
     # exchange media for 10 minutes
     print("Exchanging media")
-    await asyncio.sleep(600)
+    await asyncio.sleep(1200)
 
 
 if __name__ == "__main__":
@@ -323,7 +329,7 @@ if __name__ == "__main__":
                     )
     else:
         player = None
-    recorder = VideoReceiver()
+    recorder = VideoReceiver(-1)
 
     # Run!
     loop = asyncio.get_event_loop()
