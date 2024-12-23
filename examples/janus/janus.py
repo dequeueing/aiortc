@@ -5,9 +5,10 @@ import random
 import string
 import time
 import cv2
-
+import pyaudio
 import aiohttp
-from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
+
+from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack, AudioStreamTrack
 from aiortc.contrib.media import MediaPlayer, MediaRecorder
 
 pcs = set()
@@ -15,6 +16,30 @@ pcs = set()
 
 def transaction_id():
     return "".join(random.choice(string.ascii_letters) for x in range(12))
+
+# TODO: test user device and if no device usable, use customized track in the very first demo.
+class AudioReceiver:
+    def __init__(self, rate=48000, channels=2, chunk_size=960):
+        self.p = pyaudio.PyAudio()
+        self.stream = self.p.open(format=pyaudio.paInt16,
+                                  channels=channels,
+                                  rate=rate,
+                                  output=True,
+                                  frames_per_buffer=chunk_size,
+                                  output_device_index=None)
+
+    async def handle_track(self, track):
+        frame_count = 0
+        while True:
+            try:
+                audio_frame = await track.recv()
+                print(f"Received audio frame with pts {audio_frame.pts}, time_base {audio_frame.time_base}")
+                frame_count += 1
+                audio_data = audio_frame.to_ndarray()
+                self.stream.write(audio_data.tobytes())
+            except Exception as e:
+                print(f"Error receiving audio: {str(e)}")
+                break
 
 class VideoReceiver:
     def __init__(self, id):
@@ -152,7 +177,7 @@ class JanusSession:
                         print(data)
 
 
-async def publish(plugin, player):
+async def publish(plugin, player, audio_player=None):
     """
     Send video to the room.
     """
@@ -163,15 +188,20 @@ async def publish(plugin, player):
     # configure audio and video media
     # Taojie: the logic is actually very similar.
     #           The track can be either a Track or a MediaPlayer(WOW!)
-    media = {"audio": False, "video": True}
-    if player and player.audio:
-        pc.addTrack(player.audio)
-        media["audio"] = True
-    if player and player.video:
-        pc.addTrack(player.video)
-    else:
-        # Taojie: don't show video if there is no video track
-        pc.addTrack(VideoStreamTrack())
+    # media = {"audio": False, "video": True}
+    # if player and player.audio:
+    #     pc.addTrack(player.audio)
+    #     media["audio"] = True
+    # if player and player.video:
+    #     pc.addTrack(player.video)
+    # else:
+    #     pc.addTrack(VideoStreamTrack())
+    
+    # Taojie: we ensure that player and audio_player are not None
+    # add video and audio track to the peer connection
+    pc.addTrack(player.video)
+    pc.addTrack(audio_player.audio)
+    media = {"audio": True, "video": True}
 
     # prepare offer
     await pc.setLocalDescription(await pc.createOffer())
@@ -198,7 +228,7 @@ async def publish(plugin, player):
     )
 
 
-async def subscribe(session, room, feed, recorder: VideoReceiver):
+async def subscribe(session, room, feed, recorder: VideoReceiver, audio_recorder:AudioReceiver):
     # prepare peer connection
     pc = RTCPeerConnection()
     pcs.add(pc)
@@ -210,9 +240,9 @@ async def subscribe(session, room, feed, recorder: VideoReceiver):
         if track.kind == "video":
             # recorder.addTrack(track)
             asyncio.ensure_future(recorder.handle_track(track))
-            print("We have ensured the recorder to handle the track")
         if track.kind == "audio":
-            recorder.addTrack(track)
+            # recorder.addTrack(track)
+            asyncio.ensure_future(audio_recorder.handle_track())
 
     # subscribe: send join request to the plugin
     plugin = await session.attach("janus.plugin.videoroom")
@@ -242,7 +272,8 @@ async def subscribe(session, room, feed, recorder: VideoReceiver):
     # await recorder.start()
 
 
-async def run(player, recorder, room, session: JanusSession):
+# Taojie: to maintian consistency, player here refers to the video player; similar for audio_recorder
+async def run(player, audio_player,  recorder, audio_recorder,  room, session: JanusSession):
     # create a janus session, connect to the server
     await session.create()
 
@@ -264,6 +295,10 @@ async def run(player, recorder, room, session: JanusSession):
     publishers = response["plugindata"]["data"]["publishers"]
     for publisher in publishers:
         print("id: %(id)s, display: %(display)s" % publisher)
+                
+    # send video
+    if player:    
+        await publish(plugin=plugin, player=player, audio_player=audio_player)
 
     # receive video if publiser exists
     if recorder is not None and publishers:
@@ -273,11 +308,8 @@ async def run(player, recorder, room, session: JanusSession):
         for i, publisher in enumerate(publishers):
             recorder = VideoReceiver(i)
             await subscribe(
-                session=session, room=room, feed=publisher["id"], recorder=recorder
+                session=session, room=room, feed=publisher["id"], recorder=recorder, audio_recorder=audio_recorder
             )
-        
-    # send video
-    await publish(plugin=plugin, player=player)
 
     # exchange media for 10 minutes
     print("Exchanging media")
@@ -323,19 +355,21 @@ if __name__ == "__main__":
     # recorder = MediaRecorder(args.record_to) if args.record_to else None
     if args.play_from:
         options = {"framerate": "30", "video_size": "640x480"}
-        player = MediaPlayer(
+        video_player = MediaPlayer(
                         # "video=HP True Vision 5MP Camera", format="dshow", options=options
                         "video=HP True Vision 5MP Camera", format="dshow", options=options
                     )
+        audio_player = MediaPlayer("audio=麦克风阵列 (适用于数字麦克风的英特尔® 智音技术)", format="dshow")
     else:
-        player = None
+        video_player = None
     recorder = VideoReceiver(-1)
+    audio_recorder = AudioReceiver()
 
     # Run!
     loop = asyncio.get_event_loop()
     try:
         loop.run_until_complete(
-            run(player=player, recorder=recorder, room=args.room, session=session)
+            run(player=video_player, audio_player=audio_player, recorder=recorder, audio_recorder=audio_recorder, room=args.room, session=session)
         )
     except KeyboardInterrupt:
         pass
@@ -349,3 +383,4 @@ if __name__ == "__main__":
         # close peer connections
         coros = [pc.close() for pc in pcs]
         loop.run_until_complete(asyncio.gather(*coros))
+        print("video sending ended")

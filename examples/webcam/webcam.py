@@ -33,6 +33,7 @@ def create_local_tracks(play_from, decode):
                 )
             elif platform.system() == "Windows":
                 webcam = MediaPlayer(
+                    # "video=HP True Vision 5MP Camera", format="dshow", options=options
                     "video=Integrated Camera", format="dshow", options=options
                 )
             else:
