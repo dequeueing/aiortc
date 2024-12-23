@@ -169,7 +169,9 @@ async def publish(plugin, player):
     if player and player.video:
         pc.addTrack(player.video)
     else:
-        pc.addTrack(VideoStreamTrack())
+        # Taojie: don't show video if there is no video track
+        # pc.addTrack(VideoStreamTrack())
+        pass
 
     # prepare offer
     await pc.setLocalDescription(await pc.createOffer())
